@@ -4,14 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Обрезка рингтонов для iPhone</title>
-    <!-- Подключаем стабильную и проверенную библиотеку MP3 -->
+    <!-- Подключаем стабильную и проверенную библиотеку MP3 через CDN -->
     <script src="https://cloudflare.com"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div class="container">
-    <h1>Рингтон для iPhone 🎵</h1>
     <input type="file" id="audioFile" class="file-input" accept="audio/*">
 
     <div id="controls" class="controls">
@@ -20,7 +19,7 @@
         <div class="range-group">
             <label>Начало рингтона: <span id="startVal" class="time-display">0.0</span> сек</label>
             <input type="range" id="startTime" min="0" value="0" step="0.1">
-            <small style="color: #666; display: block; margin-top: 4px;">Длина будет ровно 30 секунд (или до конца песни).</small>
+            <small style="color: #666; display: block; margin-top: 8px;">Длина будет ровно 30 секунд (или до конца песни).</small>
         </div>
 
         <div id="status"></div>
@@ -42,41 +41,43 @@
 
     let maxCutDuration = 30.0;
 
-    fileInput.addEventListener('change', async (e) => {
+    fileInput.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
 
-        // Инициализируем аудио-контекст строго после клика/выбора файла пользователя
         if (!audioCtx) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
 
-        // Принудительно выводим блок управления, чтобы пользователь видел статус
         controls.style.display = 'block';
-        statusDiv.textContent = "Загрузка и обработка трека...";
+        statusDiv.textContent = ">> ЧТЕНИЕ И СБОРКА ПОТОКА... ПОДОЖДИТЕ.";
         cutBtn.disabled = true;
 
         audioPlayer.src = URL.createObjectURL(file);
 
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            // Разрешаем блокировку контекста, если браузер его «усыпил»
+        // Используем классический и максимально стабильный FileReader вместо arrayBuffer()
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            const arrayBuffer = evt.target.result;
+            
             if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
+                audioCtx.resume();
             }
             
-            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-            
-            startTimeInput.max = Math.max(0, audioBuffer.duration - 1).toString();
-            startTimeInput.value = "0";
-            
-            updateTimeline();
-            statusDiv.textContent = "Трек успешно загружен! Выберите время старта.";
-            cutBtn.disabled = false;
-        } catch (err) {
-            statusDiv.textContent = "Ошибка при чтении файла. Попробуйте другой трек.";
-            console.error(err);
-        }
+            audioCtx.decodeAudioData(arrayBuffer, function(decodedData) {
+                audioBuffer = decodedData;
+                startTimeInput.max = Math.max(0, audioBuffer.duration - 1).toString();
+                startTimeInput.value = "0";
+                
+                updateTimeline();
+                statusDiv.textContent = ">> ТРЕК ЗАГРУЖЕН В СЕТЬ WIRED. ВЫБЕРИТЕ СТАРТ.";
+                cutBtn.disabled = false;
+            }, function(err) {
+                statusDiv.textContent = ">> ОШИБКА ДЕКОДИРОВАНИЯ: НЕПОДДЕРЖИВАЕМЫЙ ФОРМАТ.";
+                console.error(err);
+            });
+        };
+        reader.readAsArrayBuffer(file);
     });
 
     function updateTimeline() {
@@ -87,7 +88,7 @@
 
     startTimeInput.addEventListener('input', updateTimeline);
 
-    audioPlayer.addEventListener('timeupdate', () => {
+    audioPlayer.addEventListener('timeupdate', function() {
         const start = parseFloat(startTimeInput.value);
         const end = start + maxCutDuration;
 
@@ -101,70 +102,76 @@
         }
     });
 
-    cutBtn.addEventListener('click', async () => {
+    cutBtn.addEventListener('click', async function() {
         if (!audioBuffer) return;
 
         audioPlayer.pause();
         cutBtn.disabled = true;
-        statusDiv.textContent = "Кодирование в MP3...";
+        statusDiv.textContent = ">> КОДИРОВАНИЕ ПАКЕТОВ MP3... ПРОЦЕСС ИДЕТ.";
 
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Даем браузеру перерисовать интерфейс и показать статус
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-        const start = parseFloat(startTimeInput.value);
-        const end = Math.min(start + maxCutDuration, audioBuffer.duration);
-        
-        const sampleRate = audioBuffer.sampleRate;
-        const startSample = Math.floor(start * sampleRate);
-        const endSample = Math.floor(end * sampleRate);
-        const frameCount = endSample - startSample;
+        try {
+            const start = parseFloat(startTimeInput.value);
+            const end = Math.min(start + maxCutDuration, audioBuffer.duration);
+            
+            const sampleRate = audioBuffer.sampleRate;
+            const startSample = Math.floor(start * sampleRate);
+            const endSample = Math.floor(end * sampleRate);
+            const frameCount = endSample - startSample;
 
-        const leftChannel = audioBuffer.getChannelData(0);
-        let rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+            const leftChannel = audioBuffer.getChannelData(0);
+            let rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
 
-        // Проверка lamejs на поддержку частоты дискретизации
-        let targetSampleRate = sampleRate;
-        if (![44100, 48000, 32000, 24000, 22050, 16000].includes(sampleRate)) {
-            targetSampleRate = 44100; 
-        }
+            let targetSampleRate = sampleRate;
+            if (![44100, 48000, 32000, 24000, 22050, 16000].includes(sampleRate)) {
+                targetSampleRate = 44100; 
+            }
 
-        const mp3encoder = new lamejs.Mp3Encoder(2, targetSampleRate, 128);
-        const mp3Data = [];
+            const mp3encoder = new lamejs.Mp3Encoder(2, targetSampleRate, 128); // Стерео, 128kbps
+            const mp3Data = [];
 
-        const leftInt16 = new Int16Array(frameCount);
-        const rightInt16 = new Int16Array(frameCount);
+            const leftInt16 = new Int16Array(frameCount);
+            const rightInt16 = new Int16Array(frameCount);
 
-        for (let i = 0; i < frameCount; i++) {
-            let leftSample = leftChannel[startSample + i];
-            let rightSample = rightChannel[startSample + i];
+            for (let i = 0; i < frameCount; i++) {
+                let leftSample = leftChannel[startSample + i];
+                let rightSample = rightChannel[startSample + i];
 
-            leftInt16[i] = leftSample < 0 ? leftSample * 0x8000 : leftSample * 0x7FFF;
-            rightInt16[i] = rightSample < 0 ? rightSample * 0x8000 : rightSample * 0x7FFF;
-        }
+                leftInt16[i] = leftSample < 0 ? leftSample * 0x8000 : leftSample * 0x7FFF;
+                rightInt16[i] = rightSample < 0 ? rightSample * 0x8000 : rightSample * 0x7FFF;
+            }
 
-        const sampleBlockSize = 1152;
-        for (let i = 0; i < frameCount; i += sampleBlockSize) {
-            const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
-            const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
-            const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+            const sampleBlockSize = 1152;
+            for (let i = 0; i < frameCount; i += sampleBlockSize) {
+                const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
+                const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
+                const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+                if (mp3buf.length > 0) {
+                    mp3Data.push(mp3buf);
+                }
+            }
+
+            const mp3buf = mp3encoder.flush();
             if (mp3buf.length > 0) {
                 mp3Data.push(mp3buf);
             }
+
+            const blob = new Blob(mp3Data, { type: 'audio/mp3' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ringtone_${start.toFixed(0)}s.mp3`;
+            a.click();
+
+            statusDiv.textContent = ">> КОМПИЛЯЦИЯ ЗАВЕРШЕНА. РИНГТОН СКАЧАН.";
+        } catch (error) {
+            statusDiv.textContent = ">> СБОЙ СИСТЕМЫ ПРИ СЖАТИИ.";
+            console.error(error);
+        } finally {
+            cutBtn.disabled = false;
         }
-
-        const mp3buf = mp3encoder.flush();
-        if (mp3buf.length > 0) {
-            mp3Data.push(mp3buf);
-        }
-
-        const blob = new Blob(mp3Data, { type: 'audio/mp3' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `ringtone_${start.toFixed(0)}s.mp3`;
-        a.click();
-
-        statusDiv.textContent = "Готово! Файл скачан в Загрузки.";
-        cutBtn.disabled = false;
     });
 </script>
 
