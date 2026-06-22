@@ -3,71 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Рингтон Мастер для iPhone</title>
-    <!-- Подключаем внешние стили -->
+    <title>Обрезка рингтонов для iPhone</title>
+    <!-- Подключаем внешние простые стили -->
     <link rel="stylesheet" href="style.css">
     <!-- Подключаем внешнюю библиотеку MP3 -->
     <script src="https://cloudflare.com"></script>
 </head>
 <body>
 
-<div class="card">
-    <h1>Рингтон для iPhone</h1>
-    <div class="subtitle">Обрежьте любимый трек до 30 секунд в MP3</div>
+<div class="container">
+    <h1>Рингтон для iPhone 🎵</h1>
+    <input type="file" id="audioFile" class="file-input" accept="audio/*">
 
-    <!-- Загрузка файла -->
-    <div id="uploadContainer" class="file-upload">
-        <input type="file" id="audioFile" accept="audio/*">
-        <div class="file-upload-label">
-            <div class="upload-icon">🎵</div>
-            <div class="upload-text">Выберите или перетащите трек</div>
-        </div>
-    </div>
-
-    <!-- Рабочая область после загрузки -->
-    <div id="workspace" class="workspace">
-        <audio id="audioPlayer" style="display:none;"></audio>
-
-        <!-- Виджет плеера -->
-        <div class="audio-widget">
-            <div class="player-ui">
-                <button class="play-btn" id="playBtn">▶</button>
-                <div class="track-info">
-                    <div class="track-name" id="fileName">Название трека</div>
-                    <div class="playback-duration" id="playTime">Прослушано: 0.0 из 30.0 сек</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Управление точкой старта -->
-        <div class="control-group">
-            <div class="control-header">
-                <span class="control-title">Начало рингтона</span>
-                <span class="control-value" id="startVal">0.0 сек</span>
-            </div>
+    <div id="controls" class="controls">
+        <audio id="audioPlayer" controls style="width: 100%; margin-bottom: 15px;"></audio>
+        
+        <div class="range-group">
+            <label>Начало рингтона: <span id="startVal" class="time-display">0.0</span> сек</label>
             <input type="range" id="startTime" min="0" value="0" step="0.1">
-        </div>
-
-        <div class="hint-box">
-            Плеер автоматически начнет играть музыку с этой секунды. Длина рингтона составит ровно 30 секунд (или до самого конца трека).
+            <small style="color: #666; display: block; margin-top: 4px;">Длина будет ровно 30 секунд (или до конца песни).</small>
         </div>
 
         <div id="status"></div>
-        <button id="cutBtn" class="action-btn">Создать рингтон</button>
+        <button id="cutBtn">Скачать .MP3 (макс. 30 сек)</button>
     </div>
 </div>
 
 <script>
     let audioBuffer = null;
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
+    
     const fileInput = document.getElementById('audioFile');
-    const uploadContainer = document.getElementById('uploadContainer');
-    const workspace = document.getElementById('workspace');
+    const controls = document.getElementById('controls');
     const audioPlayer = document.getElementById('audioPlayer');
-    const playBtn = document.getElementById('playBtn');
-    const playTime = document.getElementById('playTime');
-    const fileNameDiv = document.getElementById('fileName');
     const startTimeInput = document.getElementById('startTime');
     const startVal = document.getElementById('startVal');
     const cutBtn = document.getElementById('cutBtn');
@@ -79,13 +47,11 @@
         const file = e.target.files;
         if (!file) return;
 
-        uploadContainer.style.display = 'none';
-        workspace.style.display = 'block';
-        statusDiv.textContent = "Анализ аудиофайла...";
+        statusDiv.textContent = "Загрузка и обработка трека...";
         cutBtn.disabled = true;
-        fileNameDiv.textContent = file.name;
 
         audioPlayer.src = URL.createObjectURL(file);
+        controls.style.display = 'block';
 
         try {
             const arrayBuffer = await file.arrayBuffer();
@@ -98,7 +64,7 @@
             statusDiv.textContent = "";
             cutBtn.disabled = false;
         } catch (err) {
-            statusDiv.textContent = "Не удалось прочитать файл. Попробуйте другой.";
+            statusDiv.textContent = "Ошибка при чтении аудиофайла.";
             console.error(err);
         }
     });
@@ -108,16 +74,6 @@
         startVal.textContent = start.toFixed(1) + " сек";
         
         audioPlayer.currentTime = start;
-        updatePlaybackUI();
-    }
-
-    function updatePlaybackUI() {
-        const start = parseFloat(startTimeInput.value);
-        const current = audioPlayer.currentTime;
-        const elapsed = Math.max(0, current - start);
-        const currentSliceLength = Math.min(maxCutDuration, audioBuffer ? audioBuffer.duration - start : maxCutDuration);
-
-        playTime.textContent = `Прослушано: ${elapsed.toFixed(1)} из ${currentSliceLength.toFixed(1)} сек`;
     }
 
     startTimeInput.addEventListener('input', updateTimeline);
@@ -133,41 +89,17 @@
         if (audioPlayer.currentTime >= end) {
             audioPlayer.pause();
             audioPlayer.currentTime = start;
-            playBtn.textContent = "▶";
         }
-        
-        updatePlaybackUI();
-    });
-
-    playBtn.addEventListener('click', () => {
-        if (audioPlayer.paused) {
-            const start = parseFloat(startTimeInput.value);
-            if (audioPlayer.currentTime < start || audioPlayer.currentTime > start + maxCutDuration) {
-                audioPlayer.currentTime = start;
-            }
-            audioPlayer.play();
-            playBtn.textContent = "⏸";
-        } else {
-            audioPlayer.pause();
-            playBtn.textContent = "▶";
-        }
-    });
-
-    audioPlayer.addEventListener('ended', () => {
-        playBtn.textContent = "▶";
-        audioPlayer.currentTime = parseFloat(startTimeInput.value);
     });
 
     cutBtn.addEventListener('click', async () => {
         if (!audioBuffer) return;
 
         audioPlayer.pause();
-        playBtn.textContent = "▶";
-
         cutBtn.disabled = true;
-        statusDiv.textContent = "Сборка рингтона...";
+        statusDiv.textContent = "Кодирование в MP3...";
 
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 50));
 
         const start = parseFloat(startTimeInput.value);
         const end = Math.min(start + maxCutDuration, audioBuffer.duration);
@@ -221,9 +153,10 @@
         a.download = `ringtone_${start.toFixed(0)}s.mp3`;
         a.click();
 
-        statusDiv.textContent = "Сохранено в загрузки! 👍";
+        statusDiv.textContent = "Готово! Файл скачан.";
         cutBtn.disabled = false;
     });
 </script>
+
 </body>
 </html>
