@@ -57,7 +57,173 @@
     </div>
 </div>
 
-<!-- Подключаем внешнюю логику -->
-<script src="script.js"></script>
+<script>
+    let audioBuffer = null;
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const fileInput = document.getElementById('audioFile');
+    const uploadContainer = document.getElementById('uploadContainer');
+    const workspace = document.getElementById('workspace');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const playBtn = document.getElementById('playBtn');
+    const playTime = document.getElementById('playTime');
+    const fileNameDiv = document.getElementById('fileName');
+    const startTimeInput = document.getElementById('startTime');
+    const startVal = document.getElementById('startVal');
+    const cutBtn = document.getElementById('cutBtn');
+    const statusDiv = document.getElementById('status');
+
+    let maxCutDuration = 30.0;
+
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files;
+        if (!file) return;
+
+        uploadContainer.style.display = 'none';
+        workspace.style.display = 'block';
+        statusDiv.textContent = "Анализ аудиофайла...";
+        cutBtn.disabled = true;
+        fileNameDiv.textContent = file.name;
+
+        audioPlayer.src = URL.createObjectURL(file);
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            
+            startTimeInput.max = Math.max(0, audioBuffer.duration - 1).toString();
+            startTimeInput.value = "0";
+            
+            updateTimeline();
+            statusDiv.textContent = "";
+            cutBtn.disabled = false;
+        } catch (err) {
+            statusDiv.textContent = "Не удалось прочитать файл. Попробуйте другой.";
+            console.error(err);
+        }
+    });
+
+    function updateTimeline() {
+        const start = parseFloat(startTimeInput.value);
+        startVal.textContent = start.toFixed(1) + " сек";
+        
+        audioPlayer.currentTime = start;
+        updatePlaybackUI();
+    }
+
+    function updatePlaybackUI() {
+        const start = parseFloat(startTimeInput.value);
+        const current = audioPlayer.currentTime;
+        const elapsed = Math.max(0, current - start);
+        const currentSliceLength = Math.min(maxCutDuration, audioBuffer ? audioBuffer.duration - start : maxCutDuration);
+
+        playTime.textContent = `Прослушано: ${elapsed.toFixed(1)} из ${currentSliceLength.toFixed(1)} сек`;
+    }
+
+    startTimeInput.addEventListener('input', updateTimeline);
+
+    audioPlayer.addEventListener('timeupdate', () => {
+        const start = parseFloat(startTimeInput.value);
+        const end = start + maxCutDuration;
+
+        if (audioPlayer.currentTime < start) {
+            audioPlayer.currentTime = start;
+        }
+
+        if (audioPlayer.currentTime >= end) {
+            audioPlayer.pause();
+            audioPlayer.currentTime = start;
+            playBtn.textContent = "▶";
+        }
+        
+        updatePlaybackUI();
+    });
+
+    playBtn.addEventListener('click', () => {
+        if (audioPlayer.paused) {
+            const start = parseFloat(startTimeInput.value);
+            if (audioPlayer.currentTime < start || audioPlayer.currentTime > start + maxCutDuration) {
+                audioPlayer.currentTime = start;
+            }
+            audioPlayer.play();
+            playBtn.textContent = "⏸";
+        } else {
+            audioPlayer.pause();
+            playBtn.textContent = "▶";
+        }
+    });
+
+    audioPlayer.addEventListener('ended', () => {
+        playBtn.textContent = "▶";
+        audioPlayer.currentTime = parseFloat(startTimeInput.value);
+    });
+
+    cutBtn.addEventListener('click', async () => {
+        if (!audioBuffer) return;
+
+        audioPlayer.pause();
+        playBtn.textContent = "▶";
+
+        cutBtn.disabled = true;
+        statusDiv.textContent = "Сборка рингтона...";
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const start = parseFloat(startTimeInput.value);
+        const end = Math.min(start + maxCutDuration, audioBuffer.duration);
+        
+        const sampleRate = audioBuffer.sampleRate;
+        const startSample = Math.floor(start * sampleRate);
+        const endSample = Math.floor(end * sampleRate);
+        const frameCount = endSample - startSample;
+
+        const leftChannel = audioBuffer.getChannelData(0);
+        let rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+
+        let targetSampleRate = sampleRate;
+        if (!.includes(sampleRate)) {
+            targetSampleRate = 44100; 
+        }
+
+        const mp3encoder = new lamejs.Mp3Encoder(2, targetSampleRate, 128);
+        const mp3Data = [];
+
+        const leftInt16 = new Int16Array(frameCount);
+        const rightInt16 = new Int16Array(frameCount);
+
+        for (let i = 0; i < frameCount; i++) {
+            let leftSample = leftChannel[startSample + i];
+            let rightSample = rightChannel[startSample + i];
+
+            leftInt16[i] = leftSample < 0 ? leftSample * 0x8000 : leftSample * 0x7FFF;
+            rightInt16[i] = rightSample < 0 ? rightSample * 0x8000 : rightSample * 0x7FFF;
+        }
+
+        const sampleBlockSize = 1152;
+        for (let i = 0; i < frameCount; i += sampleBlockSize) {
+            const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
+            const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
+            const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+            if (mp3buf.length > 0) {
+                mp3Data.push(mp3buf);
+            }
+        }
+
+        const mp3buf = mp3encoder.flush();
+        if (mp3buf.length > 0) {
+            mp3Data.push(mp3buf);
+        }
+
+        const blob = new Blob(mp3Data, { type: 'audio/mp3' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ringtone_${start.toFixed(0)}s.mp3`;
+        a.click();
+
+        statusDiv.textContent = "Сохранено в загрузки! 👍";
+        cutBtn.disabled = false;
+    });
+</script>
 </body>
 </html>
