@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Обрезка рингтонов для iPhone</title>
-    <!-- Подключаем стабильную и проверенную библиотеку MP3 через CDN -->
+    <!-- Используем стабильную версию библиотеки MP3 -->
     <script src="https://cloudflare.com"></script>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -42,11 +42,12 @@
     let maxCutDuration = 30.0;
 
     fileInput.addEventListener('change', function(e) {
-        const file = e.target.files[0];
+        const file = e.target.files;
         if (!file) return;
 
+        // Создаем аудиоконтекст с принудительной частотой 44100 Гц для совместимости с lamejs
         if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
         }
 
         controls.style.display = 'block';
@@ -55,7 +56,6 @@
 
         audioPlayer.src = URL.createObjectURL(file);
 
-        // Используем классический и максимально стабильный FileReader вместо arrayBuffer()
         const reader = new FileReader();
         reader.onload = function(evt) {
             const arrayBuffer = evt.target.result;
@@ -109,42 +109,62 @@
         cutBtn.disabled = true;
         statusDiv.textContent = ">> КОДИРОВАНИЕ ПАКЕТОВ MP3... ПРОЦЕСС ИДЕТ.";
 
-        // Даем браузеру перерисовать интерфейс и показать статус
         await new Promise(resolve => setTimeout(resolve, 100));
 
         try {
             const start = parseFloat(startTimeInput.value);
             const end = Math.min(start + maxCutDuration, audioBuffer.duration);
             
-            const sampleRate = audioBuffer.sampleRate;
-            const startSample = Math.floor(start * sampleRate);
-            const endSample = Math.floor(end * sampleRate);
-            const frameCount = endSample - startSample;
+            // Фиксируем частоту для lamejs на 44100 Гц
+            const targetSampleRate = 44100;
+            
+            // Получаем точные индексы сэмплов исходного файла
+            const startSample = Math.floor(start * audioBuffer.sampleRate);
+            const endSample = Math.floor(end * audioBuffer.sampleRate);
+            
+            // Создаем временный чистый буфер под 44100 Гц нужной длины
+            const durationToCut = end - start;
+            const outputFrameCount = Math.floor(durationToCut * targetSampleRate);
+            
+            const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+                2, 
+                outputFrameCount, 
+                targetSampleRate
+            );
+            
+            // Вырезаем кусок аудио
+            const bufferSource = offlineCtx.createBufferSource();
+            bufferSource.buffer = audioBuffer;
+            bufferSource.connect(offlineCtx.destination);
+            
+            // Запускаем воспроизведение строго с нужного момента
+            bufferSource.start(0, start, durationToCut);
+            
+            // Дожидаемся рендеринга в формат 44100 Гц
+            const renderedBuffer = await offlineCtx.startRendering();
 
-            const leftChannel = audioBuffer.getChannelData(0);
-            let rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+            const leftChannel = renderedBuffer.getChannelData(0);
+            let rightChannel = renderedBuffer.numberOfChannels > 1 ? renderedBuffer.getChannelData(1) : leftChannel;
+            const finalFrameCount = renderedBuffer.length;
 
-            let targetSampleRate = sampleRate;
-            if (![44100, 48000, 32000, 24000, 22050, 16000].includes(sampleRate)) {
-                targetSampleRate = 44100; 
-            }
-
-            const mp3encoder = new lamejs.Mp3Encoder(2, targetSampleRate, 128); // Стерео, 128kbps
+            // Настраиваем энкодер
+            const mp3encoder = new lamejs.Mp3Encoder(2, targetSampleRate, 128);
             const mp3Data = [];
 
-            const leftInt16 = new Int16Array(frameCount);
-            const rightInt16 = new Int16Array(frameCount);
+            const leftInt16 = new Int16Array(finalFrameCount);
+            const rightInt16 = new Int16Array(finalFrameCount);
 
-            for (let i = 0; i < frameCount; i++) {
-                let leftSample = leftChannel[startSample + i];
-                let rightSample = rightChannel[startSample + i];
+            // Безопасное конвертирование данных
+            for (let i = 0; i < finalFrameCount; i++) {
+                let leftSample = leftChannel[i];
+                let rightSample = rightChannel[i];
 
                 leftInt16[i] = leftSample < 0 ? leftSample * 0x8000 : leftSample * 0x7FFF;
                 rightInt16[i] = rightSample < 0 ? rightSample * 0x8000 : rightSample * 0x7FFF;
             }
 
             const sampleBlockSize = 1152;
-            for (let i = 0; i < frameCount; i += sampleBlockSize) {
+            for (let i = 0; i < finalFrameCount; i += sampleBlockSize) {
                 const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
                 const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
                 const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
