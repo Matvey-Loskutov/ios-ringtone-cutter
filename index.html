@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Обрезка рингтонов для iPhone</title>
-    <!-- Подключаем внешние простые стили -->
-    <link rel="stylesheet" href="style.css">
-    <!-- Подключаем внешнюю библиотеку MP3 -->
+    <!-- Подключаем стабильную и проверенную библиотеку MP3 -->
     <script src="https://cloudflare.com"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -31,7 +30,7 @@
 
 <script>
     let audioBuffer = null;
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let audioCtx = null;
     
     const fileInput = document.getElementById('audioFile');
     const controls = document.getElementById('controls');
@@ -44,27 +43,38 @@
     let maxCutDuration = 30.0;
 
     fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files;
+        const file = e.target.files[0];
         if (!file) return;
 
+        // Инициализируем аудио-контекст строго после клика/выбора файла пользователя
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // Принудительно выводим блок управления, чтобы пользователь видел статус
+        controls.style.display = 'block';
         statusDiv.textContent = "Загрузка и обработка трека...";
         cutBtn.disabled = true;
 
         audioPlayer.src = URL.createObjectURL(file);
-        controls.style.display = 'block';
 
         try {
             const arrayBuffer = await file.arrayBuffer();
+            // Разрешаем блокировку контекста, если браузер его «усыпил»
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+            
             audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
             
             startTimeInput.max = Math.max(0, audioBuffer.duration - 1).toString();
             startTimeInput.value = "0";
             
             updateTimeline();
-            statusDiv.textContent = "";
+            statusDiv.textContent = "Трек успешно загружен! Выберите время старта.";
             cutBtn.disabled = false;
         } catch (err) {
-            statusDiv.textContent = "Ошибка при чтении аудиофайла.";
+            statusDiv.textContent = "Ошибка при чтении файла. Попробуйте другой трек.";
             console.error(err);
         }
     });
@@ -72,7 +82,6 @@
     function updateTimeline() {
         const start = parseFloat(startTimeInput.value);
         startVal.textContent = start.toFixed(1) + " сек";
-        
         audioPlayer.currentTime = start;
     }
 
@@ -112,8 +121,9 @@
         const leftChannel = audioBuffer.getChannelData(0);
         let rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
 
+        // Проверка lamejs на поддержку частоты дискретизации
         let targetSampleRate = sampleRate;
-        if (!.includes(sampleRate)) {
+        if (![44100, 48000, 32000, 24000, 22050, 16000].includes(sampleRate)) {
             targetSampleRate = 44100; 
         }
 
@@ -153,7 +163,7 @@
         a.download = `ringtone_${start.toFixed(0)}s.mp3`;
         a.click();
 
-        statusDiv.textContent = "Готово! Файл скачан.";
+        statusDiv.textContent = "Готово! Файл скачан в Загрузки.";
         cutBtn.disabled = false;
     });
 </script>
